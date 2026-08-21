@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toPng } from "html-to-image";
 
 type AcademicLevel = "undergraduate" | "graduate";
@@ -48,6 +54,12 @@ type ResultData = {
   program: Program;
 };
 
+type PreparedStory = {
+  dataUrl: string;
+  file: File;
+  filename: string;
+};
+
 const REASONS = [
   { value: "EXAMS", label: "EXAMS", code: "DMG-01" },
   { value: "ASSIGNMENTS", label: "ASSIGNMENTS", code: "DMG-02" },
@@ -62,7 +74,9 @@ const REASONS = [
 ] as const;
 
 function toNumber(value: number | string | null | undefined) {
-  if (value === null || value === undefined) return null;
+  if (value === null || value === undefined) {
+    return null;
+  }
 
   const number = Number(value);
 
@@ -94,20 +108,10 @@ function easternDateKey() {
 }
 
 function reasonLabel(reason: string) {
-  return REASONS.find((item) => item.value === reason)?.label ?? reason;
-}
-
-function isMobileDevice() {
-  if (typeof navigator === "undefined") return false;
-
-  const normalMobile =
-    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-  const iPadDesktopMode =
-    navigator.platform === "MacIntel" &&
-    navigator.maxTouchPoints > 1;
-
-  return normalMobile || iPadDesktopMode;
+  return (
+    REASONS.find((item) => item.value === reason)?.label ??
+    reason
+  );
 }
 
 export default function Home() {
@@ -133,63 +137,71 @@ export default function Home() {
   const [programPickerOpen, setProgramPickerOpen] =
     useState(false);
 
-  const [programSearch, setProgramSearch] =
-    useState("");
+  const [programSearch, setProgramSearch] = useState("");
 
-  const [shareMenuOpen, setShareMenuOpen] =
-    useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
-  const [submitting, setSubmitting] =
-    useState(false);
+  const [preparingStory, setPreparingStory] = useState(false);
 
-  const [sharing, setSharing] =
-    useState(false);
+  const [preparedStory, setPreparedStory] =
+    useState<PreparedStory | null>(null);
 
-  const [error, setError] =
-    useState<string | null>(null);
+  const [siteHost, setSiteHost] = useState("COOKED @ GT");
 
-  const storyCardRef =
-    useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  async function loadCampus(level: AcademicLevel) {
-    try {
-      setError(null);
+  const storyCardRef = useRef<HTMLDivElement>(null);
 
-      const response = await fetch(
-        `/api/campus?level=${level}`,
-        {
-          cache: "no-store",
+  const loadCampus = useCallback(
+    async (level: AcademicLevel) => {
+      try {
+        setError(null);
+
+        const response = await fetch(
+          `/api/campus?level=${level}`,
+          {
+            cache: "no-store",
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("Campus API failed.");
         }
-      );
 
-      if (!response.ok) {
-        throw new Error("Campus API failed.");
+        const data: CampusData = await response.json();
+
+        setCampusData(data);
+        setPrograms(data.programs);
+      } catch (err) {
+        console.error(err);
+
+        setError(
+          "CONNECTION ERROR // CAMPUS PULSE OFFLINE"
+        );
+      } finally {
+        setLoading(false);
       }
-
-      const data: CampusData =
-        await response.json();
-
-      setCampusData(data);
-      setPrograms(data.programs);
-    } catch (err) {
-      console.error(err);
-
-      setError(
-        "CONNECTION ERROR // CAMPUS PULSE OFFLINE"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    []
+  );
 
   useEffect(() => {
-    const savedLevel =
-      localStorage.getItem(
-        "cooked_academic_level"
-      );
+    if (typeof window === "undefined") return;
+
+    setSiteHost(
+      window.location.host.replace(/^www\./, "")
+    );
+  }, []);
+
+  useEffect(() => {
+    const savedLevel = localStorage.getItem(
+      "cooked_academic_level"
+    );
 
     const level: AcademicLevel =
       savedLevel === "graduate"
@@ -198,35 +210,28 @@ export default function Home() {
 
     setAcademicLevel(level);
 
-    const savedProgram =
-      localStorage.getItem(
-        "cooked_program_id"
-      );
+    const savedProgram = localStorage.getItem(
+      "cooked_program_id"
+    );
 
     if (savedProgram) {
-      const parsedProgram =
-        Number(savedProgram);
+      const parsedProgram = Number(savedProgram);
 
       if (Number.isFinite(parsedProgram)) {
-        setSelectedProgramId(
-          parsedProgram
-        );
+        setSelectedProgramId(parsedProgram);
       }
     }
 
-    const savedCheckin =
-      localStorage.getItem(
-        "cooked_last_checkin"
-      );
+    const savedCheckin = localStorage.getItem(
+      "cooked_last_checkin"
+    );
 
     if (savedCheckin) {
       try {
-        const parsed =
-          JSON.parse(savedCheckin);
+        const parsed = JSON.parse(savedCheckin);
 
         if (
-          parsed.date ===
-            easternDateKey() &&
+          parsed.date === easternDateKey() &&
           parsed.result
         ) {
           setResult(parsed.result);
@@ -239,56 +244,38 @@ export default function Home() {
     }
 
     loadCampus(level);
-  }, []);
+  }, [loadCampus]);
 
-  const selectedProgram =
-    programs.find(
-      (program) =>
-        program.id ===
-        selectedProgramId
-    );
+  const selectedProgram = programs.find(
+    (program) => program.id === selectedProgramId
+  );
 
-  const filteredPrograms =
-    useMemo(() => {
-      return programs
-        .filter(
-          (program) =>
-            program.academic_level ===
-            academicLevel
-        )
-        .filter((program) => {
-          const haystack =
-            `${program.name} ${program.degree}`
-              .toLowerCase();
+  const filteredPrograms = useMemo(() => {
+    return programs
+      .filter(
+        (program) =>
+          program.academic_level === academicLevel
+      )
+      .filter((program) => {
+        const haystack =
+          `${program.name} ${program.degree}`.toLowerCase();
 
-          return haystack.includes(
-            programSearch.toLowerCase()
-          );
-        })
-        .sort((a, b) =>
-          a.name.localeCompare(b.name)
+        return haystack.includes(
+          programSearch.toLowerCase()
         );
-    }, [
-      programs,
-      academicLevel,
-      programSearch,
-    ]);
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [programs, academicLevel, programSearch]);
 
   const campusScore =
-    toNumber(
-      campusData?.campusPulse
-        .average_score
-    ) ?? null;
+    toNumber(campusData?.campusPulse.average_score) ??
+    null;
 
   const campusCount =
-    toNumber(
-      campusData?.campusPulse
-        .total_checkins
-    ) ?? 0;
+    toNumber(campusData?.campusPulse.total_checkins) ??
+    0;
 
-  async function changeLevel(
-    level: AcademicLevel
-  ) {
+  async function changeLevel(level: AcademicLevel) {
     setAcademicLevel(level);
 
     localStorage.setItem(
@@ -298,8 +285,7 @@ export default function Home() {
 
     if (
       selectedProgram &&
-      selectedProgram.academic_level !==
-        level
+      selectedProgram.academic_level !== level
     ) {
       setSelectedProgramId(null);
 
@@ -316,8 +302,7 @@ export default function Home() {
   async function submitCheckin() {
     if (!selectedProgramId) {
       setError(
-        academicLevel ===
-          "undergraduate"
+        academicLevel === "undergraduate"
           ? "SELECT YOUR MAJOR BEFORE CONTINUING"
           : "SELECT YOUR PROGRAM BEFORE CONTINUING"
       );
@@ -329,29 +314,24 @@ export default function Home() {
 
     setSubmitting(true);
     setError(null);
+    setNotice(null);
 
     try {
-      const response = await fetch(
-        "/api/checkin",
-        {
-          method: "POST",
+      const response = await fetch("/api/checkin", {
+        method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
+        headers: {
+          "Content-Type": "application/json",
+        },
 
-          body: JSON.stringify({
-            programId:
-              selectedProgramId,
-            score,
-            reason,
-          }),
-        }
-      );
+        body: JSON.stringify({
+          programId: selectedProgramId,
+          score,
+          reason,
+        }),
+      });
 
-      const data =
-        await response.json();
+      const data = await response.json();
 
       if (response.status === 409) {
         setError(
@@ -363,20 +343,14 @@ export default function Home() {
 
       if (!response.ok) {
         throw new Error(
-          data?.error ??
-            "Check-in failed."
+          data?.error ?? "Check-in failed."
         );
       }
 
       const newResult: ResultData = {
-        score:
-          data.checkin.score,
-
-        reason:
-          data.checkin.reason,
-
-        program:
-          data.checkin.program,
+        score: data.checkin.score,
+        reason: data.checkin.reason,
+        program: data.checkin.program,
       };
 
       setResult(newResult);
@@ -388,8 +362,7 @@ export default function Home() {
 
       localStorage.setItem(
         "cooked_academic_level",
-        data.checkin.program
-          .academic_level
+        data.checkin.program.academic_level
       );
 
       localStorage.setItem(
@@ -401,8 +374,7 @@ export default function Home() {
       );
 
       await loadCampus(
-        data.checkin.program
-          .academic_level
+        data.checkin.program.academic_level
       );
 
       window.scrollTo({
@@ -421,52 +393,84 @@ export default function Home() {
   }
 
   /*
-   * ===========================================
-   * SHARE CARD GENERATION
-   * ===========================================
+   * ============================================
+   * SHARE SYSTEM
+   * ============================================
    */
 
-  async function generateStoryImage() {
+  function getShareUrl() {
+    if (typeof window === "undefined") {
+      return "";
+    }
+
+    return new URL("/", window.location.origin).toString();
+  }
+
+  async function copyText(text: string) {
     if (
-      !storyCardRef.current ||
-      !result
+      navigator.clipboard &&
+      window.isSecureContext
     ) {
-      throw new Error(
-        "Story card not ready."
-      );
+      await navigator.clipboard.writeText(text);
+      return;
     }
 
-    if (document.fonts?.ready) {
-      await document.fonts.ready;
-    }
+    const textarea =
+      document.createElement("textarea");
 
-    const dataUrl =
-      await toPng(
+    textarea.value = text;
+
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+
+    document.body.appendChild(textarea);
+
+    textarea.focus();
+    textarea.select();
+
+    const copied =
+      document.execCommand("copy");
+
+    textarea.remove();
+
+    if (!copied) {
+      throw new Error("Copy failed.");
+    }
+  }
+
+  const generateStoryImage = useCallback(
+    async (): Promise<PreparedStory> => {
+      if (!storyCardRef.current || !result) {
+        throw new Error(
+          "Story card not ready."
+        );
+      }
+
+      if (document.fonts?.ready) {
+        await document.fonts.ready;
+      }
+
+      const dataUrl = await toPng(
         storyCardRef.current,
         {
           cacheBust: true,
-
           pixelRatio: 1,
 
           width: 1080,
           height: 1920,
 
-          backgroundColor:
-            "#090a12",
+          backgroundColor: "#090a12",
         }
       );
 
-    const response =
-      await fetch(dataUrl);
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
 
-    const blob =
-      await response.blob();
+      const filename =
+        `cooked-at-gt-${result.score}-${easternDateKey()}.png`;
 
-    const filename =
-      `cooked-at-gt-${result.score}-${easternDateKey()}.png`;
-
-    const file =
-      new File(
+      const file = new File(
         [blob],
         filename,
         {
@@ -474,11 +478,87 @@ export default function Home() {
         }
       );
 
-    return {
-      dataUrl,
-      file,
-      filename,
+      return {
+        dataUrl,
+        file,
+        filename,
+      };
+    },
+    [result]
+  );
+
+  /*
+   * 핵심:
+   *
+   * SHARE SCORE 모달을 여는 순간
+   * Story PNG를 미리 생성한다.
+   *
+   * 그래서 Instagram 버튼을 누른 순간에는
+   * 이미지 생성 await 없이 바로 navigator.share()를 호출한다.
+   */
+
+  useEffect(() => {
+    if (
+      !shareMenuOpen ||
+      !result ||
+      !storyCardRef.current
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    setPreparedStory(null);
+    setPreparingStory(true);
+
+    async function prepareStory() {
+      try {
+        const story =
+          await generateStoryImage();
+
+        if (!cancelled) {
+          setPreparedStory(story);
+        }
+      } catch (err) {
+        console.error(
+          "Story preparation failed:",
+          err
+        );
+
+        if (!cancelled) {
+          setError(
+            "STORY GENERATION FAILED"
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setPreparingStory(false);
+        }
+      }
+    }
+
+    prepareStory();
+
+    return () => {
+      cancelled = true;
     };
+  }, [
+    shareMenuOpen,
+    result,
+    campusScore,
+    campusCount,
+    siteHost,
+    generateStoryImage,
+  ]);
+
+  function openShareMenu() {
+    setError(null);
+    setNotice(null);
+
+    setPreparedStory(null);
+    setPreparingStory(true);
+
+    setShareMenuOpen(true);
   }
 
   async function saveScoreImage() {
@@ -486,132 +566,109 @@ export default function Home() {
 
     setSharing(true);
     setError(null);
+    setNotice(null);
 
     try {
-      const {
-        dataUrl,
-        filename,
-      } =
-        await generateStoryImage();
+      const story =
+        preparedStory ??
+        (await generateStoryImage());
 
       const link =
         document.createElement("a");
 
-      link.href =
-        dataUrl;
+      link.href = story.dataUrl;
+      link.download = story.filename;
 
-      link.download =
-        filename;
-
-      document.body.appendChild(
-        link
-      );
+      document.body.appendChild(link);
 
       link.click();
       link.remove();
 
       setShareMenuOpen(false);
+
+      setNotice(
+        "STORY IMAGE SAVED // READY TO POST"
+      );
     } catch (err) {
       console.error(
         "Image save error:",
         err
       );
 
-      setError(
-        "IMAGE SAVE FAILED"
-      );
+      setError("IMAGE SAVE FAILED");
     } finally {
       setSharing(false);
     }
   }
 
+  /*
+   * INSTAGRAM / STORY SHARE
+   *
+   * 중요:
+   * 여기서는 이미지 생성 작업을 하지 않는다.
+   *
+   * 사용자 클릭 -> navigator.share()
+   * 순서가 즉시 이어져야 iPhone Safari에서 안정적이다.
+   */
+
   async function shareToInstagram() {
     if (!result) return;
 
-    setSharing(true);
+    if (!preparedStory) {
+      setError(
+        "STORY IS STILL RENDERING // TRY AGAIN"
+      );
+
+      return;
+    }
+
     setError(null);
+    setNotice(null);
+
+    const shareData = {
+      files: [preparedStory.file],
+    };
+
+    if (
+      typeof navigator.share !== "function"
+    ) {
+      setError(
+        "NATIVE SHARE NOT AVAILABLE // USE SAVE IMAGE"
+      );
+
+      return;
+    }
+
+    if (
+      typeof navigator.canShare === "function" &&
+      !navigator.canShare(shareData)
+    ) {
+      setError(
+        "IMAGE SHARING NOT SUPPORTED // USE SAVE IMAGE"
+      );
+
+      return;
+    }
 
     try {
-      const {
-        file,
-        dataUrl,
-        filename,
-      } =
-        await generateStoryImage();
-
-      const mobile =
-        isMobileDevice();
-
-      const nativeShareAvailable =
-        typeof navigator.share ===
-        "function";
-
-      const fileSharingAvailable =
-        nativeShareAvailable &&
-        (
-          typeof navigator.canShare !==
-            "function" ||
-          navigator.canShare({
-            files: [file],
-          })
-        );
-
       /*
-       * Mobile:
-       * Native share sheet.
-       * Instagram may be selected here.
+       * 절대로 이 위에 await 넣지 말 것.
+       *
+       * navigator.share()를 사용자의 탭과
+       * 같은 activation 안에서 바로 호출한다.
        */
-      if (
-        mobile &&
-        fileSharingAvailable
-      ) {
-        await navigator.share({
-          title:
-            "Cooked @ GT",
+      const sharePromise =
+        navigator.share(shareData);
 
-          text:
-            `I'm ${result.score}% cooked at GT 🔥\n` +
-            `${cookedLabel(result.score)}\n` +
-            `#CookedAtGT`,
+      setSharing(true);
 
-          files: [file],
-        });
-
-        setShareMenuOpen(false);
-
-        return;
-      }
-
-      /*
-       * Desktop fallback:
-       * download Story PNG.
-       */
-      const link =
-        document.createElement("a");
-
-      link.href =
-        dataUrl;
-
-      link.download =
-        filename;
-
-      document.body.appendChild(
-        link
-      );
-
-      link.click();
-      link.remove();
+      await sharePromise;
 
       setShareMenuOpen(false);
-
-      setError(
-        "STORY IMAGE SAVED // OPEN ON MOBILE TO SHARE TO INSTAGRAM"
-      );
     } catch (err) {
       if (
         err instanceof Error &&
-        err.name ===
-          "AbortError"
+        err.name === "AbortError"
       ) {
         return;
       }
@@ -621,8 +678,19 @@ export default function Home() {
         err
       );
 
+      if (
+        err instanceof Error &&
+        err.name === "NotAllowedError"
+      ) {
+        setError(
+          "SHARE BLOCKED // OPEN IN SAFARI AND TAP AGAIN"
+        );
+
+        return;
+      }
+
       setError(
-        "INSTAGRAM SHARE FAILED"
+        "INSTAGRAM SHARE FAILED // USE SAVE IMAGE"
       );
     } finally {
       setSharing(false);
@@ -630,9 +698,119 @@ export default function Home() {
   }
 
   /*
-   * ===========================================
+   * 실제 플레이 가능한 사이트 링크 공유
+   */
+
+  async function shareLink() {
+    if (!result) return;
+
+    const shareUrl = getShareUrl();
+
+    const shareText =
+      `I'm ${Math.round(result.score)}% COOKED at GT 🔥\n` +
+      `${cookedLabel(result.score)}\n\n` +
+      `How cooked are you?`;
+
+    const shareData = {
+      title: "Cooked @ GT",
+      text: shareText,
+      url: shareUrl,
+    };
+
+    setError(null);
+    setNotice(null);
+
+    try {
+      if (
+        typeof navigator.share === "function"
+      ) {
+        /*
+         * 링크 공유도 사용자 클릭 직후 바로 호출.
+         */
+        const sharePromise =
+          navigator.share(shareData);
+
+        setSharing(true);
+
+        await sharePromise;
+
+        setShareMenuOpen(false);
+
+        return;
+      }
+
+      await copyText(
+        `${shareText}\n${shareUrl}`
+      );
+
+      setShareMenuOpen(false);
+
+      setNotice(
+        "SHARE LINK COPIED // CHALLENGE SOMEONE"
+      );
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.name === "AbortError"
+      ) {
+        return;
+      }
+
+      console.error(
+        "Link share error:",
+        err
+      );
+
+      try {
+        await copyText(
+          `${shareText}\n${shareUrl}`
+        );
+
+        setShareMenuOpen(false);
+
+        setNotice(
+          "SHARE LINK COPIED // CHALLENGE SOMEONE"
+        );
+      } catch {
+        setError(
+          "LINK SHARE FAILED"
+        );
+      }
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  async function copyLink() {
+    const shareUrl = getShareUrl();
+
+    setError(null);
+    setNotice(null);
+
+    try {
+      await copyText(shareUrl);
+
+      setShareMenuOpen(false);
+
+      setNotice(
+        "LINK COPIED // CHALLENGE SOMEONE"
+      );
+    } catch (err) {
+      console.error(
+        "Copy link error:",
+        err
+      );
+
+      setError(
+        "COPY LINK FAILED"
+      );
+    }
+  }
+
+  /*
+   * ============================================
    * RESULT SCREEN
-   * ===========================================
+   * ============================================
    */
 
   if (result) {
@@ -650,23 +828,17 @@ export default function Home() {
             <span>1UP</span>
 
             <strong>
-              {padScore(
-                result.score
-              )}
+              {padScore(result.score)}
             </strong>
           </div>
 
           <div>
-            <span>
-              HI-SCORE
-            </span>
+            <span>HI-SCORE</span>
 
             <strong>
               {campusScore === null
                 ? "---"
-                : padScore(
-                    campusScore
-                  )}
+                : padScore(campusScore)}
             </strong>
           </div>
 
@@ -674,9 +846,7 @@ export default function Home() {
             <span>GT</span>
 
             <strong>
-              {String(
-                campusCount
-              ).padStart(
+              {String(campusCount).padStart(
                 3,
                 "0"
               )}
@@ -689,25 +859,17 @@ export default function Home() {
             ★ GAME OVER ★
           </p>
 
-          <h1>
-            COOKED
-          </h1>
+          <h1>COOKED</h1>
 
           <div className="player-score">
-            {padScore(
-              result.score
-            )}
+            {padScore(result.score)}
           </div>
 
           <div className="status-window">
-            <span>
-              PLAYER STATUS
-            </span>
+            <span>PLAYER STATUS</span>
 
             <strong>
-              {cookedLabel(
-                result.score
-              )}
+              {cookedLabel(result.score)}
             </strong>
           </div>
 
@@ -718,9 +880,7 @@ export default function Home() {
 
           <p className="damage-code">
             PRIMARY DAMAGE:{" "}
-            {reasonLabel(
-              result.reason
-            )}
+            {reasonLabel(result.reason)}
           </p>
         </section>
 
@@ -730,9 +890,7 @@ export default function Home() {
           </div>
 
           <div className="campus-score-window">
-            <span>
-              GEORGIA TECH
-            </span>
+            <span>GEORGIA TECH</span>
 
             <strong>
               {campusScore === null
@@ -742,16 +900,11 @@ export default function Home() {
                   )}%`}
             </strong>
 
-            <p>
-              COOKED TODAY
-            </p>
+            <p>COOKED TODAY</p>
 
             <small>
-              {campusCount} ANONYMOUS
-              CHECK-IN
-              {campusCount === 1
-                ? ""
-                : "S"}
+              {campusCount} ANONYMOUS CHECK-IN
+              {campusCount === 1 ? "" : "S"}
             </small>
           </div>
         </section>
@@ -761,61 +914,40 @@ export default function Home() {
             ★ HIGH SCORE TABLE ★
           </div>
 
-          {campusData?.leaderboard
-            .length ? (
+          {campusData?.leaderboard.length ? (
             <div className="high-score-table">
               <div className="high-score-row heading-row">
-                <span>
-                  RANK
-                </span>
-
-                <span>
-                  MAJOR
-                </span>
-
-                <span>
-                  SCORE
-                </span>
+                <span>RANK</span>
+                <span>MAJOR</span>
+                <span>SCORE</span>
               </div>
 
               {campusData.leaderboard
                 .slice(0, 8)
-                .map(
-                  (
-                    item,
-                    index
-                  ) => (
-                    <div
-                      className="high-score-row"
-                      key={
-                        item.program_id
-                      }
-                    >
-                      <span>
-                        {String(
-                          index + 1
-                        ).padStart(
-                          2,
-                          "0"
-                        )}
-                      </span>
+                .map((item, index) => (
+                  <div
+                    className="high-score-row"
+                    key={item.program_id}
+                  >
+                    <span>
+                      {String(
+                        index + 1
+                      ).padStart(2, "0")}
+                    </span>
 
-                      <span>
-                        {
-                          item.program_name
-                        }
-                      </span>
+                    <span>
+                      {item.program_name}
+                    </span>
 
-                      <span>
-                        {padScore(
-                          Number(
-                            item.average_score
-                          )
-                        )}
-                      </span>
-                    </div>
-                  )
-                )}
+                    <span>
+                      {padScore(
+                        Number(
+                          item.average_score
+                        )
+                      )}
+                    </span>
+                  </div>
+                ))}
             </div>
           ) : (
             <div className="empty-arcade-window">
@@ -824,13 +956,11 @@ export default function Home() {
               </strong>
 
               <span>
-                3 CHECK-INS REQUIRED
-                PER MAJOR
+                3 CHECK-INS REQUIRED PER MAJOR
               </span>
 
               <span className="blink-text">
-                WAITING FOR MORE
-                PLAYERS...
+                WAITING FOR MORE PLAYERS...
               </span>
             </div>
           )}
@@ -842,27 +972,20 @@ export default function Home() {
           </div>
 
           <div className="damage-stats">
-            {campusData?.reasons
-              .length ? (
+            {campusData?.reasons.length ? (
               campusData.reasons.map(
                 (item) => {
                   const percentage =
-                    Number(
-                      item.percentage
-                    );
+                    Number(item.percentage);
 
                   return (
                     <div
                       className="damage-stat-row"
-                      key={
-                        item.reason
-                      }
+                      key={item.reason}
                     >
                       <div className="damage-stat-label">
                         <span>
-                          {
-                            item.reason
-                          }
+                          {item.reason}
                         </span>
 
                         <strong>
@@ -876,8 +999,7 @@ export default function Home() {
                       <div className="pixel-bar">
                         <div
                           style={{
-                            width:
-                              `${percentage}%`,
+                            width: `${percentage}%`,
                           }}
                         />
                       </div>
@@ -893,9 +1015,9 @@ export default function Home() {
           </div>
         </section>
 
-        {/* =====================================
+        {/* ====================================
             VISIBLE PLAYER CARD
-        ====================================== */}
+        ==================================== */}
 
         <section className="arcade-section">
           <div className="section-heading">
@@ -912,10 +1034,7 @@ export default function Home() {
             </p>
 
             <strong className="share-player-score">
-              {Math.round(
-                result.score
-              )}
-              %
+              {Math.round(result.score)}%
             </strong>
 
             <div className="share-cooked-word">
@@ -923,53 +1042,37 @@ export default function Home() {
             </div>
 
             <span className="share-status">
-              {cookedLabel(
-                result.score
-              )}
+              {cookedLabel(result.score)}
             </span>
 
             <div className="share-context">
-              <span>
-                PRIMARY DAMAGE
-              </span>
+              <span>PRIMARY DAMAGE</span>
 
               <strong>
-                {reasonLabel(
-                  result.reason
-                )}
+                {reasonLabel(result.reason)}
               </strong>
 
-              <span>
-                MAJOR
-              </span>
+              <span>MAJOR</span>
 
               <strong>
-                {
-                  result.program
-                    .name
-                }
+                {result.program.name}
               </strong>
             </div>
 
             <div className="share-divider" />
 
             <div className="share-gt-block">
-              <span>
-                GT TODAY
-              </span>
+              <span>GT TODAY</span>
 
               <strong>
-                {resultCampusScore ===
-                null
+                {resultCampusScore === null
                   ? "---"
                   : `${resultCampusScore}% COOKED`}
               </strong>
 
               <small>
                 {campusCount} CHECK-IN
-                {campusCount === 1
-                  ? ""
-                  : "S"}{" "}
+                {campusCount === 1 ? "" : "S"}{" "}
                 TODAY
               </small>
             </div>
@@ -980,22 +1083,18 @@ export default function Home() {
           </div>
 
           <button
+            type="button"
             className="arcade-main-button share-score-button"
-            onClick={() => {
-              setError(null);
-              setShareMenuOpen(
-                true
-              );
-            }}
+            onClick={openShareMenu}
             disabled={sharing}
           >
             SHARE SCORE
           </button>
         </section>
 
-        {/* =====================================
-            1080 x 1920 EXPORT-ONLY CARD
-        ====================================== */}
+        {/* ====================================
+            HIDDEN 1080 x 1920 STORY CARD
+        ==================================== */}
 
         <div className="story-export-stage">
           <div
@@ -1003,74 +1102,48 @@ export default function Home() {
             className="story-export-card"
           >
             <div className="story-export-header">
-              <span>
-                COOKED @ GT
-              </span>
-
-              <span>
-                PLAYER 1
-              </span>
+              <span>COOKED @ GT</span>
+              <span>PLAYER 1</span>
             </div>
 
             <div className="story-export-main">
               <div className="story-export-hero">
-                <p>
-                  YOU&apos;RE
-                </p>
+                <p>YOU&apos;RE</p>
 
                 <strong>
-                  {Math.round(
-                    result.score
-                  )}
-                  %
+                  {Math.round(result.score)}%
                 </strong>
 
-                <h2>
-                  COOKED
-                </h2>
+                <h2>COOKED</h2>
 
                 <span>
-                  {cookedLabel(
-                    result.score
-                  )}
+                  {cookedLabel(result.score)}
                 </span>
               </div>
 
               <div className="story-export-context">
-                <span>
-                  PRIMARY DAMAGE
-                </span>
+                <span>PRIMARY DAMAGE</span>
 
                 <strong className="story-export-damage">
-                  {reasonLabel(
-                    result.reason
-                  )}
+                  {reasonLabel(result.reason)}
                 </strong>
 
                 <div className="story-export-context-line" />
 
-                <span>
-                  MAJOR
-                </span>
+                <span>MAJOR</span>
 
                 <strong className="story-export-major">
-                  {
-                    result.program
-                      .name
-                  }
+                  {result.program.name}
                 </strong>
               </div>
 
               <div className="story-export-divider" />
 
               <div className="story-export-gt-panel">
-                <span>
-                  GT TODAY
-                </span>
+                <span>GT TODAY</span>
 
                 <strong>
-                  {resultCampusScore ===
-                  null
+                  {resultCampusScore === null
                     ? "---"
                     : `${resultCampusScore}% COOKED`}
                 </strong>
@@ -1091,16 +1164,23 @@ export default function Home() {
               </strong>
 
               <span>
-                COOKED @ GT
+                PLAY NOW ↓
               </span>
 
+              <b>{siteHost}</b>
+
               <small>
-                NOT AFFILIATED WITH
-                GEORGIA TECH
+                NOT AFFILIATED WITH GEORGIA TECH
               </small>
             </div>
           </div>
         </div>
+
+        {notice && (
+          <div className="system-notice">
+            {notice}
+          </div>
+        )}
 
         {error && (
           <div className="system-error">
@@ -1108,23 +1188,19 @@ export default function Home() {
           </div>
         )}
 
-        {/* =====================================
+        {/* ====================================
             SHARE MODAL
-        ====================================== */}
+        ==================================== */}
 
         {shareMenuOpen && (
           <div
             className="share-modal-backdrop"
-            onMouseDown={(
-              event
-            ) => {
+            onMouseDown={(event) => {
               if (
                 event.target ===
                 event.currentTarget
               ) {
-                setShareMenuOpen(
-                  false
-                );
+                setShareMenuOpen(false);
               }
             }}
           >
@@ -1132,8 +1208,7 @@ export default function Home() {
               <div className="share-modal-header">
                 <div>
                   <small>
-                    SYSTEM / SHARE
-                    MODULE
+                    SYSTEM / SHARE MODULE
                   </small>
 
                   <strong>
@@ -1142,78 +1217,40 @@ export default function Home() {
                 </div>
 
                 <button
+                  type="button"
                   className="share-modal-close"
                   onClick={() =>
-                    setShareMenuOpen(
-                      false
-                    )
+                    setShareMenuOpen(false)
                   }
-                  disabled={
-                    sharing
-                  }
+                  disabled={sharing}
                 >
                   X
                 </button>
               </div>
 
               <div className="share-modal-preview">
-                <span>
-                  PLAYER SCORE
-                </span>
+                <span>PLAYER SCORE</span>
 
                 <strong>
-                  {Math.round(
-                    result.score
-                  )}
-                  %
+                  {Math.round(result.score)}%
                 </strong>
 
                 <p>
-                  {cookedLabel(
-                    result.score
-                  )}
+                  {cookedLabel(result.score)}
                 </p>
               </div>
 
               <div className="share-modal-options">
-                <button
-                  className="share-option save"
-                  onClick={
-                    saveScoreImage
-                  }
-                  disabled={
-                    sharing
-                  }
-                >
-                  <span className="share-option-icon">
-                    ↓
-                  </span>
-
-                  <div>
-                    <strong>
-                      {sharing
-                        ? "GENERATING..."
-                        : "SAVE IMAGE"}
-                    </strong>
-
-                    <small>
-                      1080 × 1920 STORY
-                      PNG
-                    </small>
-                  </div>
-
-                  <span className="share-option-arrow">
-                    &gt;
-                  </span>
-                </button>
+                {/* INSTAGRAM */}
 
                 <button
+                  type="button"
                   className="share-option instagram"
-                  onClick={
-                    shareToInstagram
-                  }
+                  onClick={shareToInstagram}
                   disabled={
-                    sharing
+                    sharing ||
+                    preparingStory ||
+                    !preparedStory
                   }
                 >
                   <span className="share-option-icon">
@@ -1222,13 +1259,102 @@ export default function Home() {
 
                   <div>
                     <strong>
-                      {sharing
-                        ? "GENERATING..."
-                        : "INSTAGRAM"}
+                      {preparingStory
+                        ? "PREPARING STORY..."
+                        : "INSTAGRAM STORY"}
                     </strong>
 
                     <small>
-                      SHARE STORY CARD
+                      {preparingStory
+                        ? "RENDERING 1080 × 1920"
+                        : "CHOOSE INSTAGRAM IN SHARE SHEET"}
+                    </small>
+                  </div>
+
+                  <span className="share-option-arrow">
+                    &gt;
+                  </span>
+                </button>
+
+                {/* SHARE LINK */}
+
+                <button
+                  type="button"
+                  className="share-option link"
+                  onClick={shareLink}
+                  disabled={sharing}
+                >
+                  <span className="share-option-icon">
+                    ↗
+                  </span>
+
+                  <div>
+                    <strong>
+                      SHARE LINK
+                    </strong>
+
+                    <small>
+                      CHALLENGE YOUR FRIENDS
+                    </small>
+                  </div>
+
+                  <span className="share-option-arrow">
+                    &gt;
+                  </span>
+                </button>
+
+                {/* SAVE IMAGE */}
+
+                <button
+                  type="button"
+                  className="share-option save"
+                  onClick={saveScoreImage}
+                  disabled={
+                    sharing ||
+                    preparingStory ||
+                    !preparedStory
+                  }
+                >
+                  <span className="share-option-icon">
+                    ↓
+                  </span>
+
+                  <div>
+                    <strong>
+                      {preparingStory
+                        ? "PREPARING..."
+                        : "SAVE IMAGE"}
+                    </strong>
+
+                    <small>
+                      1080 × 1920 STORY PNG
+                    </small>
+                  </div>
+
+                  <span className="share-option-arrow">
+                    &gt;
+                  </span>
+                </button>
+
+                {/* COPY LINK */}
+
+                <button
+                  type="button"
+                  className="share-option copy"
+                  onClick={copyLink}
+                  disabled={sharing}
+                >
+                  <span className="share-option-icon">
+                    ⧉
+                  </span>
+
+                  <div>
+                    <strong>
+                      COPY LINK
+                    </strong>
+
+                    <small>
+                      COPY GAME URL
                     </small>
                   </div>
 
@@ -1239,11 +1365,10 @@ export default function Home() {
               </div>
 
               <button
+                type="button"
                 className="share-cancel-button"
                 onClick={() =>
-                  setShareMenuOpen(
-                    false
-                  )
+                  setShareMenuOpen(false)
                 }
                 disabled={sharing}
               >
@@ -1251,8 +1376,8 @@ export default function Home() {
               </button>
 
               <p className="share-modal-hint">
-                ★ INSTAGRAM SHARING
-                WORKS BEST ON MOBILE ★
+                ★ FOR INSTAGRAM, USE SAFARI ON
+                IPHONE ★
               </p>
             </div>
           </div>
@@ -1264,8 +1389,7 @@ export default function Home() {
           </span>
 
           <span>
-            NOT AFFILIATED WITH
-            GEORGIA TECH
+            NOT AFFILIATED WITH GEORGIA TECH
           </span>
         </footer>
       </main>
@@ -1273,9 +1397,9 @@ export default function Home() {
   }
 
   /*
-   * ===========================================
-   * INTRO
-   * ===========================================
+   * ============================================
+   * INTRO SCREEN
+   * ============================================
    */
 
   if (screen === "intro") {
@@ -1290,28 +1414,20 @@ export default function Home() {
           </div>
 
           <div>
-            <span>
-              HI-SCORE
-            </span>
+            <span>HI-SCORE</span>
 
             <strong>
               {campusScore === null
                 ? "---"
-                : padScore(
-                    campusScore
-                  )}
+                : padScore(campusScore)}
             </strong>
           </div>
 
           <div>
-            <span>
-              PLAYERS
-            </span>
+            <span>PLAYERS</span>
 
             <strong>
-              {String(
-                campusCount
-              ).padStart(
+              {String(campusCount).padStart(
                 3,
                 "0"
               )}
@@ -1321,8 +1437,7 @@ export default function Home() {
 
         <section className="intro-hero">
           <p className="green-label">
-            PLAYER 1 / DAILY
-            CHECK-IN
+            PLAYER 1 / DAILY CHECK-IN
           </p>
 
           <h1>
@@ -1332,18 +1447,16 @@ export default function Home() {
           </h1>
 
           <p className="intro-copy">
-            GEORGIA TECH&apos;S
-            UNOFFICIAL
+            GEORGIA TECH&apos;S UNOFFICIAL
             <br />
             DAILY DAMAGE REPORT
           </p>
 
           <button
+            type="button"
             className="arcade-main-button"
             onClick={() =>
-              setScreen(
-                "checkin"
-              )
+              setScreen("checkin")
             }
           >
             START GAME
@@ -1360,9 +1473,9 @@ export default function Home() {
   }
 
   /*
-   * ===========================================
-   * CHECK-IN
-   * ===========================================
+   * ============================================
+   * CHECK-IN SCREEN
+   * ============================================
    */
 
   return (
@@ -1379,28 +1492,20 @@ export default function Home() {
         </div>
 
         <div>
-          <span>
-            GT SCORE
-          </span>
+          <span>GT SCORE</span>
 
           <strong>
             {campusScore === null
               ? "---"
-              : padScore(
-                  campusScore
-                )}
+              : padScore(campusScore)}
           </strong>
         </div>
 
         <div>
-          <span>
-            PLAYERS
-          </span>
+          <span>PLAYERS</span>
 
           <strong>
-            {String(
-              campusCount
-            ).padStart(
+            {String(campusCount).padStart(
               3,
               "0"
             )}
@@ -1410,8 +1515,7 @@ export default function Home() {
 
       <section className="checkin-hero">
         <p className="green-label">
-          STAGE 01 /
-          COOK-O-METER
+          STAGE 01 / COOK-O-METER
         </p>
 
         <h1>
@@ -1431,33 +1535,21 @@ export default function Home() {
             min="0"
             max="100"
             value={score}
-            onChange={(
-              event
-            ) =>
+            onChange={(event) =>
               setScore(
-                Number(
-                  event.target
-                    .value
-                )
+                Number(event.target.value)
               )
             }
           />
 
           <div className="slider-labels">
-            <span>
-              CHILLING
-            </span>
-
-            <span>
-              COOKED
-            </span>
+            <span>CHILLING</span>
+            <span>COOKED</span>
           </div>
         </div>
 
         <div className="status-window">
-          <span>
-            SYSTEM STATUS
-          </span>
+          <span>SYSTEM STATUS</span>
 
           <strong>
             {cookedLabel(score)}
@@ -1471,88 +1563,71 @@ export default function Home() {
         </div>
 
         <div className="damage-menu">
-          {REASONS.map(
-            (item) => {
-              const selected =
-                item.value ===
-                reason;
+          {REASONS.map((item) => {
+            const selected =
+              item.value === reason;
 
-              return (
-                <button
-                  key={
-                    item.value
-                  }
-                  className={
-                    selected
-                      ? "damage-option selected"
-                      : "damage-option"
-                  }
-                  onClick={() =>
-                    setReason(
-                      item.value
-                    )
-                  }
-                >
-                  <span className="selector">
-                    {selected
-                      ? "▶"
-                      : " "}
-                  </span>
+            return (
+              <button
+                type="button"
+                key={item.value}
+                className={
+                  selected
+                    ? "damage-option selected"
+                    : "damage-option"
+                }
+                onClick={() =>
+                  setReason(item.value)
+                }
+              >
+                <span className="selector">
+                  {selected ? "▶" : " "}
+                </span>
 
-                  <span>
-                    {
-                      item.label
-                    }
-                  </span>
+                <span>
+                  {item.label}
+                </span>
 
-                  <small>
-                    {
-                      item.code
-                    }
-                  </small>
-                </button>
-              );
-            }
-          )}
+                <small>
+                  {item.code}
+                </small>
+              </button>
+            );
+          })}
         </div>
       </section>
 
       <section className="arcade-section">
         <div className="section-heading yellow-heading">
-          {academicLevel ===
-          "undergraduate"
+          {academicLevel === "undergraduate"
             ? "SELECT YOUR MAJOR"
             : "SELECT YOUR PROGRAM"}
         </div>
 
         <div className="level-tabs">
           <button
+            type="button"
             className={
-              academicLevel ===
-              "undergraduate"
+              academicLevel === "undergraduate"
                 ? "active"
                 : ""
             }
             onClick={() =>
-              changeLevel(
-                "undergraduate"
-              )
+              changeLevel("undergraduate")
             }
           >
             UNDERGRAD
           </button>
 
           <button
+            type="button"
             className={
-              academicLevel ===
-              "graduate"
+              academicLevel === "graduate"
                 ? "active"
                 : ""
             }
             onClick={() =>
-              changeLevel(
-                "graduate"
-              )
+              changeLevel("graduate")
             }
           >
             GRAD
@@ -1560,11 +1635,10 @@ export default function Home() {
         </div>
 
         <button
+          type="button"
           className="program-select-button"
           onClick={() =>
-            setProgramPickerOpen(
-              true
-            )
+            setProgramPickerOpen(true)
           }
         >
           <span>
@@ -1590,10 +1664,9 @@ export default function Home() {
         )}
 
         <button
+          type="button"
           className="arcade-main-button checkin-button"
-          onClick={
-            submitCheckin
-          }
+          onClick={submitCheckin}
           disabled={
             submitting ||
             loading
@@ -1605,8 +1678,7 @@ export default function Home() {
         </button>
 
         <p className="blink-text continue-message">
-          ★ ONE PLAY PER DAY /
-          ATLANTA TIME ★
+          ★ ONE PLAY PER DAY / ATLANTA TIME ★
         </p>
       </section>
 
@@ -1616,24 +1688,19 @@ export default function Home() {
         </span>
 
         <span>
-          NOT AFFILIATED WITH
-          GEORGIA TECH
+          NOT AFFILIATED WITH GEORGIA TECH
         </span>
       </footer>
 
       {programPickerOpen && (
         <div
           className="program-modal-backdrop"
-          onMouseDown={(
-            event
-          ) => {
+          onMouseDown={(event) => {
             if (
               event.target ===
               event.currentTarget
             ) {
-              setProgramPickerOpen(
-                false
-              );
+              setProgramPickerOpen(false);
             }
           }}
         >
@@ -1641,8 +1708,7 @@ export default function Home() {
             <div className="program-modal-header">
               <div>
                 <small>
-                  DATABASE / GT
-                  PROGRAMS
+                  DATABASE / GT PROGRAMS
                 </small>
 
                 <strong>
@@ -1654,10 +1720,9 @@ export default function Home() {
               </div>
 
               <button
+                type="button"
                 onClick={() =>
-                  setProgramPickerOpen(
-                    false
-                  )
+                  setProgramPickerOpen(false)
                 }
               >
                 X
@@ -1669,15 +1734,10 @@ export default function Home() {
 
               <input
                 autoFocus
-                value={
-                  programSearch
-                }
-                onChange={(
-                  event
-                ) =>
+                value={programSearch}
+                onChange={(event) =>
                   setProgramSearch(
-                    event.target
-                      .value
+                    event.target.value
                   )
                 }
                 placeholder="TYPE TO SEARCH..."
@@ -1688,9 +1748,8 @@ export default function Home() {
               {filteredPrograms.map(
                 (program) => (
                   <button
-                    key={
-                      program.id
-                    }
+                    type="button"
+                    key={program.id}
                     onClick={() => {
                       setSelectedProgramId(
                         program.id
@@ -1698,18 +1757,11 @@ export default function Home() {
 
                       localStorage.setItem(
                         "cooked_program_id",
-                        String(
-                          program.id
-                        )
+                        String(program.id)
                       );
 
-                      setProgramSearch(
-                        ""
-                      );
-
-                      setError(
-                        null
-                      );
+                      setProgramSearch("");
+                      setError(null);
 
                       setProgramPickerOpen(
                         false
@@ -1717,22 +1769,17 @@ export default function Home() {
                     }}
                   >
                     <span>
-                      {
-                        program.name
-                      }
+                      {program.name}
                     </span>
 
                     <strong>
-                      {
-                        program.degree
-                      }
+                      {program.degree}
                     </strong>
                   </button>
                 )
               )}
 
-              {!filteredPrograms
-                .length && (
+              {!filteredPrograms.length && (
                 <div className="program-empty">
                   NO MATCH FOUND
                 </div>
